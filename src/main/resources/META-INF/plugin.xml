@@ -19,17 +19,32 @@
 
     <!-- Product and plugin compatibility requirements.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
+    <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.compose</depends>
-
+    <depends>com.intellij.platform.images</depends>
     <depends>org.intellij.plugins.markdown</depends>
     <resource-bundle>messages.MyMessageBundle</resource-bundle>
     <!-- Extensions defined by the plugin.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
     <extensions defaultExtensionNs="com.intellij">
+        <applicationService serviceImplementation="com.github.emotionbug.mermaidliveeditor.MermaidSettingsState"/>
+        <applicationConfigurable instance="com.github.emotionbug.mermaidliveeditor.MermaidSettingsConfigurable"
+                                 id="com.github.emotionbug.mermaidliveeditor.MermaidSettingsConfigurable"
+                                 displayName="Mermaid Live Editor"/>
+
         <fileType name="Mermaid File" implementationClass="com.github.emotionbug.mermaidliveeditor.MermaidFileType"
-                  fieldName="INSTANCE" extensions="mermaid;mmd"/>
+                  fieldName="INSTANCE" extensions="mermaid;mmd" language="Mermaid"/>
 
         <fileEditorProvider implementation="com.github.emotionbug.mermaidliveeditor.MermaidFileEditorProvider"/>
+
+        <lang.parserDefinition language="Mermaid"
+                               implementationClass="com.github.emotionbug.mermaidliveeditor.MermaidParserDefinition"/>
+        <lang.syntaxHighlighterFactory language="Mermaid"
+                                       implementationClass="com.github.emotionbug.mermaidliveeditor.MermaidSyntaxHighlighterFactory"/>
+
+        <colorSettingsPage implementation="com.github.emotionbug.mermaidliveeditor.MermaidColorSettingsPage"/>
+
+        <annotator language="Mermaid" implementationClass="com.github.emotionbug.mermaidliveeditor.MermaidAnnotator"/>
 
         <toolWindow id="MyToolWindow" factoryClass="com.github.emotionbug.mermaidliveeditor.MyToolWindowFactory"
                     icon="AllIcons.Toolwindows.ToolWindowPalette"/>

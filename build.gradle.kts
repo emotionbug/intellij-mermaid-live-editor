@@ -26,6 +26,7 @@ dependencies {
         composeUI()
 
         bundledPlugin("org.intellij.plugins.markdown")
+        bundledPlugin("com.intellij.platform.images")
     }
 }
 
@@ -46,6 +47,10 @@ tasks {
     withType<JavaCompile> {
         sourceCompatibility = "21"
         targetCompatibility = "21"
+    }
+
+    instrumentCode {
+        enabled = false
     }
 }
 
