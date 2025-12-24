@@ -1,0 +1,1 @@
+rootProject.name = "mermaid-live-editor"
