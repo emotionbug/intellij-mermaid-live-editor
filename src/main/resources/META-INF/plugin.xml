@@ -20,10 +20,7 @@
     <!-- Product and plugin compatibility requirements.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html -->
     <depends>com.intellij.modules.platform</depends>
-    <depends>com.intellij.modules.compose</depends>
     <depends>com.intellij.platform.images</depends>
-    <depends>org.intellij.plugins.markdown</depends>
-    <resource-bundle>messages.MyMessageBundle</resource-bundle>
     <!-- Extensions defined by the plugin.
          Read more: https://plugins.jetbrains.com/docs/intellij/plugin-extension-points.html -->
     <extensions defaultExtensionNs="com.intellij">
@@ -45,8 +42,5 @@
         <colorSettingsPage implementation="com.github.emotionbug.mermaidliveeditor.MermaidColorSettingsPage"/>
 
         <annotator language="Mermaid" implementationClass="com.github.emotionbug.mermaidliveeditor.MermaidAnnotator"/>
-
-        <toolWindow id="MyToolWindow" factoryClass="com.github.emotionbug.mermaidliveeditor.MyToolWindowFactory"
-                    icon="AllIcons.Toolwindows.ToolWindowPalette"/>
     </extensions>
 </idea-plugin>

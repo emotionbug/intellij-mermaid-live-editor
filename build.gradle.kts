@@ -2,7 +2,6 @@ plugins {
     id("java")
     id("org.jetbrains.kotlin.jvm") version "2.1.20"
     id("org.jetbrains.intellij.platform") version "2.10.2"
-    id("org.jetbrains.kotlin.plugin.compose") version "2.1.20"
 }
 
 group = "com.github.emotionbug"
@@ -21,13 +20,13 @@ dependencies {
         intellijIdea("2025.2.4")
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
 
-        // Add plugin dependencies for compilation here:
-
-        composeUI()
-
-        bundledPlugin("org.intellij.plugins.markdown")
         bundledPlugin("com.intellij.platform.images")
     }
+
+    implementation("org.apache.poi:poi-ooxml:5.5.1")
+
+    implementation("org.seleniumhq.selenium:selenium-java:4.39.0")
+    implementation("io.github.bonigarcia:webdrivermanager:6.3.3")
 }
 
 intellijPlatform {

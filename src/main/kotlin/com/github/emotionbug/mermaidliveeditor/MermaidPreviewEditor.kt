@@ -2,17 +2,23 @@ package com.github.emotionbug.mermaidliveeditor
 
 import com.google.gson.Gson
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
+import com.intellij.openapi.actionSystem.*
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.application.runReadAction
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
+import com.intellij.openapi.fileChooser.FileChooserFactory
+import com.intellij.openapi.fileChooser.FileSaverDescriptor
 import com.intellij.openapi.fileEditor.*
 import com.intellij.openapi.fileEditor.ex.FileEditorProviderManager
+import com.intellij.openapi.fileEditor.impl.text.TextEditorProvider
 import com.intellij.openapi.fileTypes.FileTypeManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.UserDataHolderBase
+import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiManager
@@ -23,7 +29,6 @@ import com.intellij.ui.jcef.JBCefBrowserBase
 import com.intellij.ui.jcef.JBCefJSQuery
 import com.intellij.util.Alarm
 import com.intellij.util.FileContentUtilCore
-import com.intellij.util.LocalTimeCounter
 import org.cef.CefSettings
 import org.cef.browser.CefBrowser
 import org.cef.browser.CefFrame
@@ -33,9 +38,17 @@ import org.cef.handler.CefContextMenuHandlerAdapter
 import org.cef.handler.CefDisplayHandlerAdapter
 import org.cef.handler.CefLoadHandlerAdapter
 import java.awt.BorderLayout
+import java.awt.Component
+import java.awt.Container
+import java.awt.Rectangle
+import java.awt.event.ComponentAdapter
+import java.awt.event.ComponentEvent
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import java.beans.PropertyChangeListener
 import javax.swing.JComponent
 import javax.swing.JLabel
+import javax.swing.JLayeredPane
 import javax.swing.JPanel
 
 class MermaidPreviewEditor(private val project: Project, private val file: VirtualFile) : UserDataHolderBase(),
@@ -48,6 +61,7 @@ class MermaidPreviewEditor(private val project: Project, private val file: Virtu
         isVisible = false
     }
     private val browser = JBCefBrowser()
+    private val svgBrowser = JBCefBrowser()
     private val jsQuery = JBCefJSQuery.create(browser as JBCefBrowserBase)
     private val errorJsQuery = JBCefJSQuery.create(browser as JBCefBrowserBase)
     private var documentListener: DocumentListener? = null
@@ -55,21 +69,126 @@ class MermaidPreviewEditor(private val project: Project, private val file: Virtu
     private var isSkeletonLoaded = false
     private var lastMermaidJsUrl: String? = null
     private val gson = Gson()
-
     private var currentImageEditor: FileEditor? = null
     private var tempSvgFile: LightVirtualFile? = null
+    private var lastSvg: String? = null
+
+    private val contextMenuListener = object : MouseAdapter() {
+        override fun mousePressed(e: MouseEvent) {
+            showPopupMenu(e)
+        }
+
+        override fun mouseReleased(e: MouseEvent) {
+            showPopupMenu(e)
+        }
+
+        private fun showPopupMenu(e: MouseEvent) {
+            if (e.isPopupTrigger) {
+                val actionManager = ActionManager.getInstance()
+                val group = DefaultActionGroup()
+
+                group.add(object : AnAction("Save SVG As...") {
+                    override fun getActionUpdateThread(): ActionUpdateThread {
+                        return ActionUpdateThread.BGT
+                    }
+
+                    override fun actionPerformed(e: AnActionEvent) {
+                        val svg = lastSvg ?: return
+                        val descriptor =
+                            FileSaverDescriptor("Save SVG As", "Save the rendered diagram as an SVG file", "svg")
+                        val dialog = FileChooserFactory.getInstance().createSaveFileDialog(descriptor, project)
+                        val fileWrapper = dialog.save(null as VirtualFile?, "diagram.svg")
+                        if (fileWrapper != null) {
+                            WriteAction.run<Exception> {
+                                FileUtil.writeToFile(fileWrapper.file, svg)
+                            }
+                        }
+                    }
+
+                    override fun update(e: AnActionEvent) {
+                        e.presentation.isEnabled = lastSvg != null
+                    }
+                })
+
+                group.add(object : AnAction("Save PPTX As...") {
+                    override fun getActionUpdateThread(): ActionUpdateThread {
+                        return ActionUpdateThread.BGT
+                    }
+
+                    override fun actionPerformed(e: AnActionEvent) {
+                        val svg = lastSvg ?: return
+                        val descriptor =
+                            FileSaverDescriptor("Save PPTX As", "Save the rendered diagram as a PPTX file", "pptx")
+                        val dialog = FileChooserFactory.getInstance().createSaveFileDialog(descriptor, project)
+                        val fileWrapper = dialog.save(null as VirtualFile?, "diagram.pptx")
+                        if (fileWrapper != null) {
+                            try {
+                                MermaidSvg2Pptx.generate(svg, fileWrapper.file)
+                            } catch (e: Exception) {
+                                LOG.error("Failed to generate PPTX", e)
+                            }
+                        }
+                    }
+
+                    override fun update(e: AnActionEvent) {
+                        e.presentation.isEnabled = lastSvg != null
+                    }
+                })
+
+                val popupMenu = actionManager.createActionPopupMenu("MermaidPreviewPopupMenu", group)
+                popupMenu.component.show(e.component, e.x, e.y)
+            }
+        }
+    }
+
+    private fun addContextMenuRecursively(component: Component) {
+        component.addMouseListener(contextMenuListener)
+        if (component is Container) {
+            for (child in component.components) {
+                addContextMenuRecursively(child)
+            }
+        }
+    }
 
     init {
-        component.add(errorLabel, BorderLayout.NORTH)
-        component.add(previewPanel, BorderLayout.CENTER)
-
         // Browser must be in the component tree for JCEF to work correctly in some cases
+        // We use a layered pane to hide it without affecting the layout
+        val layeredPane = JLayeredPane()
+        layeredPane.layout = null // Manual positioning
+
         val browserComponent = browser.component
-        browserComponent.preferredSize = java.awt.Dimension(0, 0)
-        component.add(browserComponent, BorderLayout.SOUTH)
+        browserComponent.bounds = Rectangle(0, 0, 0, 0)
+        browserComponent.isVisible = false
+        layeredPane.add(browserComponent, JLayeredPane.DEFAULT_LAYER)
+
+        val tmpSvgBrowserComponent = svgBrowser.component
+        tmpSvgBrowserComponent.bounds = Rectangle(0, 0, 0, 0)
+        tmpSvgBrowserComponent.isVisible = false
+        layeredPane.add(tmpSvgBrowserComponent, JLayeredPane.DEFAULT_LAYER)
+
+        val mainPanel = JPanel(BorderLayout())
+        mainPanel.add(errorLabel, BorderLayout.NORTH)
+        mainPanel.add(previewPanel, BorderLayout.CENTER)
+
+        mainPanel.bounds = Rectangle(0, 0, 0, 0) // Will be managed by component layout
+        layeredPane.add(mainPanel, JLayeredPane.PALETTE_LAYER)
+
+        // Make layeredPane follow parent size
+        component.addComponentListener(object : ComponentAdapter() {
+            override fun componentResized(e: ComponentEvent?) {
+                val r = Rectangle(0, 0, component.width, component.height)
+                layeredPane.bounds = r
+                mainPanel.bounds = r
+                layeredPane.revalidate()
+                layeredPane.repaint()
+            }
+        })
+
+        component.add(layeredPane, BorderLayout.CENTER)
 
         jsQuery.addHandler { svg ->
             ApplicationManager.getApplication().invokeLater {
+                lastSvg = svg
                 errorLabel.isVisible = false
                 updateImageEditor(svg)
 
@@ -201,85 +320,83 @@ class MermaidPreviewEditor(private val project: Project, private val file: Virtu
     }
 
     private fun updateImageEditor(svg: String) {
-        LOG.info("Updating image editor, SVG length: ${svg.length}")
+        if (svg == lastSvg && currentImageEditor != null) {
+            LOG.info("SVG content unchanged, skipping updateImageEditor")
+            return
+        }
+        LOG.info("updateImageEditor called, SVG length: ${svg.length}")
         if (svg.isBlank()) {
             LOG.warn("SVG is blank, skipping update")
             return
         }
 
-        val fileName = "${file.nameWithoutExtension}.svg"
-        val svgFileType = FileTypeManager.getInstance().getFileTypeByExtension("svg")
-
-        val existingEditor = currentImageEditor
-        val existingFile = tempSvgFile
-
-        if (existingEditor != null && existingFile != null && existingEditor.isValid) {
-            LOG.info("Reusing existing image editor of type: ${existingEditor.javaClass.name}")
-            ApplicationManager.getApplication().runWriteAction {
-                try {
-                    val document = FileDocumentManager.getInstance().getDocument(existingFile)
-                    if (document != null) {
-                        LOG.info("Updating SVG document")
-                        document.setText(svg)
-                    } else {
-                        LOG.info("Updating SVG binary content")
-                        existingFile.setBinaryContent(
-                            svg.toByteArray(Charsets.UTF_8),
-                            LocalTimeCounter.currentTime(),
-                            System.currentTimeMillis()
-                        )
+        try {
+            val svgBytes = svg.toByteArray(Charsets.UTF_8)
+            if (tempSvgFile == null) {
+                tempSvgFile =
+                    LightVirtualFile("preview.svg", FileTypeManager.getInstance().getFileTypeByExtension("svg"), svg)
+            } else {
+                ApplicationManager.getApplication().runWriteAction {
+                    try {
+                        tempSvgFile!!.setBinaryContent(svgBytes)
+                        // Update modification stamp to trigger refresh using reflection or other means if protected
+                        // But wait, setBinaryContent might already update it.
+                        // Let's try to just use setBinaryContent and if it doesn't work, we'll find another way.
+                        // Actually, we can use a custom LightVirtualFile if needed, but let's try to just remove the direct access.
+                    } catch (e: Exception) {
+                        LOG.error("Failed to update temp SVG file content", e)
                     }
-                } catch (e: Exception) {
-                    LOG.error("Failed to update existing SVG file", e)
                 }
             }
-            FileContentUtilCore.reparseFiles(existingFile)
 
-            // Try to force reload via reflection if it's an ImageEditor
-            refreshImageEditor(existingEditor, existingFile)
+            val providers = FileEditorProviderManager.getInstance().getProviderList(project, tempSvgFile!!)
+            val imageProvider = providers.firstOrNull { it.editorTypeId == "images" || it.editorTypeId == "svg-editor" }
+                ?: providers.firstOrNull { it !is TextEditorProvider }
+                ?: providers.firstOrNull()
 
-            val state = existingEditor.getState(FileEditorStateLevel.FULL)
-            existingEditor.setState(state)
-            return
-        }
+            if (imageProvider != null) {
+                if (currentImageEditor != null && currentImageEditor!!.javaClass == imageProvider.javaClass) {
+                    FileContentUtilCore.reparseFiles(tempSvgFile!!)
+                    if (currentImageEditor !is TextEditor && currentImageEditor !is TextEditorWithPreview) {
+                        val state = currentImageEditor!!.getState(FileEditorStateLevel.FULL)
+                        currentImageEditor!!.setState(state)
+                    }
+                } else {
+                    val oldEditor = currentImageEditor
+                    val oldState = oldEditor?.getState(FileEditorStateLevel.FULL)
 
-        val newFile = LightVirtualFile(fileName, svgFileType, svg)
-        tempSvgFile = newFile
+                    val newEditor = imageProvider.createEditor(project, tempSvgFile!!)
+                    if (newEditor is TextEditorWithPreview) {
+                        newEditor.setLayout(TextEditorWithPreview.Layout.SHOW_PREVIEW)
+                    }
 
-        val providers = FileEditorProviderManager.getInstance().getProviderList(project, newFile)
-        LOG.info("Found ${providers.size} providers for temp SVG file: ${providers.joinToString { it.getEditorTypeId() }}")
-        val imageProvider = providers.firstOrNull {
-            it.getEditorTypeId() == "images" || it.javaClass.name.contains(
-                "Image",
-                ignoreCase = true
-            )
-        }
+                    previewPanel.removeAll()
+                    previewPanel.add(newEditor.component, BorderLayout.CENTER)
+                    addContextMenuRecursively(newEditor.component)
+                    currentImageEditor = newEditor
 
-        if (imageProvider != null) {
-            LOG.info("Using image provider: ${imageProvider.javaClass.name}")
-            val oldEditor = currentImageEditor
-            val newEditor = imageProvider.createEditor(project, newFile)
+                    if (oldState != null) {
+                        try {
+                            newEditor.setState(oldState)
+                        } catch (e: Exception) {
+                            LOG.warn("Failed to restore editor state", e)
+                        }
+                    }
 
-            if (oldEditor != null) {
-                val state = oldEditor.getState(FileEditorStateLevel.FULL)
-                newEditor.setState(state)
+                    if (oldEditor != null) {
+                        Disposer.dispose(oldEditor)
+                    }
+                }
             }
-
-            previewPanel.removeAll()
-            previewPanel.add(newEditor.component, BorderLayout.CENTER)
             previewPanel.revalidate()
             previewPanel.repaint()
-
-            currentImageEditor = newEditor
-            if (oldEditor != null) {
-                Disposer.dispose(oldEditor)
-            }
-        } else {
-            LOG.error("No image provider found for SVG. Providers found: ${providers.joinToString { it.getEditorTypeId() }}")
+        } catch (e: Exception) {
+            LOG.error("Failed to update image editor", e)
         }
     }
 
     private fun updatePreview(text: String) {
+        LOG.info("updatePreview called")
         val currentUrl = MermaidSettingsState.instance.mermaidJsUrl
         if (!isSkeletonLoaded || currentUrl != lastMermaidJsUrl) {
             loadSkeleton(text)
@@ -321,15 +438,15 @@ class MermaidPreviewEditor(private val project: Project, private val file: Virtu
                                 column: e.hash ? (e.hash.loc ? e.hash.loc.first_column : -1) : (e.loc ? e.loc.first_column : (e.column !== undefined ? e.column : -1))
                             }))
                         };
-                        ${errorJsQuery.inject("JSON.stringify(errorData)")}
+                        ${errorJsQuery.inject("JSON.stringify(errorData)")};
                         return;
                     }
-                    
+                
                     // If parse succeeded, try to render
                     const id = 'mermaid-svg-' + Date.now();
                     const container = document.getElementById('mermaid-container');
                     const { svg } = await mermaid.render(id, text, container);
-                    ${jsQuery.inject("svg")}
+                    ${jsQuery.inject("svg")};
                 } catch (err) {
                     console.error(err);
                     const errorData = {
@@ -339,7 +456,7 @@ class MermaidPreviewEditor(private val project: Project, private val file: Virtu
                             column: err.hash ? (err.hash.loc ? err.hash.loc.first_column : -1) : (err.loc ? err.loc.first_column : (err.column !== undefined ? err.column : -1))
                         }]
                     };
-                    ${errorJsQuery.inject("JSON.stringify(errorData)")}
+                    ${errorJsQuery.inject("JSON.stringify(errorData)")};
                 }
             })();
         """.trimIndent()
@@ -355,12 +472,21 @@ class MermaidPreviewEditor(private val project: Project, private val file: Virtu
             <html>
             <head>
                 <meta charset="UTF-8">
+                <style>
+                    html, body, #mermaid-container {
+                        width: 100%;
+                        height: 100%;
+                        margin: 0;
+                        padding: 0;
+                        overflow: hidden;
+                    }
+                </style>
                 <script>
                     function reportError(msg) {
                         const errorData = {
                             errors: [{ message: msg, line: -1, column: -1 }]
                         };
-                        ${errorJsQuery.inject("JSON.stringify(errorData)")}
+                        ${errorJsQuery.inject("JSON.stringify(errorData)")};
                     }
                 </script>
                 <script src="${lastMermaidJsUrl}" onerror="reportError('Failed to load Mermaid.js from ' + this.src)"></script>
@@ -370,7 +496,15 @@ class MermaidPreviewEditor(private val project: Project, private val file: Virtu
                             mermaid.initialize({
                                 startOnLoad: false,
                                 theme: (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'default',
-                                securityLevel: 'loose'
+                                securityLevel: 'loose',
+                                flowchart: { useMaxWidth: false },
+                                sequence: { useMaxWidth: false },
+                                gantt: { useMaxWidth: false },
+                                journey: { useMaxWidth: false },
+                                class: { useMaxWidth: false },
+                                state: { useMaxWidth: false },
+                                er: { useMaxWidth: false },
+                                pie: { useMaxWidth: false }
                             });
                             
                             // 초기 렌더링
@@ -391,14 +525,14 @@ class MermaidPreviewEditor(private val project: Project, private val file: Virtu
                                                     column: e.hash ? (e.hash.loc ? e.hash.loc.first_column : -1) : (e.loc ? e.loc.first_column : (e.column !== undefined ? e.column : -1))
                                                 }))
                                             };
-                                            ${errorJsQuery.inject("JSON.stringify(errorData)")}
+                                            ${errorJsQuery.inject("JSON.stringify(errorData)")};
                                             return;
                                         }
                                         
                                         const id = 'mermaid-svg-' + Date.now();
                                         const container = document.getElementById('mermaid-container');
                                         const { svg } = await mermaid.render(id, initialText, container);
-                                        ${jsQuery.inject("svg")}
+                                        ${jsQuery.inject("svg")};
                                     } catch (err) {
                                         console.error(err);
                                         const errorData = {
@@ -408,7 +542,7 @@ class MermaidPreviewEditor(private val project: Project, private val file: Virtu
                                                 column: err.hash ? (err.hash.loc ? err.hash.loc.first_column : -1) : (err.loc ? err.loc.first_column : (err.column !== undefined ? err.column : -1))
                                             }]
                                         };
-                                        ${errorJsQuery.inject("JSON.stringify(errorData)")}
+                                        ${errorJsQuery.inject("JSON.stringify(errorData)")};
                                     }
                                 })();
                             }
@@ -421,46 +555,18 @@ class MermaidPreviewEditor(private val project: Project, private val file: Virtu
                                     column: -1
                                 }]
                             };
-                            ${errorJsQuery.inject("JSON.stringify(errorData)")}
+                            ${errorJsQuery.inject("JSON.stringify(errorData)")};
                         }
                     });
                 </script>
             </head>
             <body>
-                <div id="mermaid-container"></div>
+                <div id="mermaid-container" style="width: 2000px; height: 2000px;"></div>
             </body>
             </html>
         """.trimIndent()
         isSkeletonLoaded = false
         browser.loadHTML(html)
-    }
-
-    private fun refreshImageEditor(editor: FileEditor, file: VirtualFile) {
-        val component = editor.component
-        val imageEditor = findImageEditorComponent(component)
-        if (imageEditor != null) {
-            try {
-                val setFileMethod = imageEditor.javaClass.getMethod("setFile", VirtualFile::class.java)
-                setFileMethod.isAccessible = true
-                setFileMethod.invoke(imageEditor, file)
-                LOG.info("Refreshed ImageEditor via reflection")
-            } catch (e: Exception) {
-                LOG.warn("Failed to refresh ImageEditor via reflection: ${e.message}")
-            }
-        }
-    }
-
-    private fun findImageEditorComponent(comp: java.awt.Component): Any? {
-        if (comp.javaClass.name.contains("ImageEditor") || comp.javaClass.name.contains("SvgViewer")) {
-            return comp
-        }
-        if (comp is java.awt.Container) {
-            for (child in comp.components) {
-                val found = findImageEditorComponent(child)
-                if (found != null) return found
-            }
-        }
-        return null
     }
 
     override fun getFile(): VirtualFile = file
@@ -487,18 +593,16 @@ class MermaidPreviewEditor(private val project: Project, private val file: Virtu
         currentImageEditor?.removePropertyChangeListener(listener)
     }
 
-    override fun getCurrentLocation(): FileEditorLocation? = currentImageEditor?.getCurrentLocation()
+    override fun getCurrentLocation(): FileEditorLocation? = currentImageEditor?.currentLocation
 
     override fun dispose() {
         val document = runReadAction { FileDocumentManager.getInstance().getDocument(file) }
         documentListener?.let {
             document?.removeDocumentListener(it)
         }
-        currentImageEditor?.let {
-            Disposer.dispose(it)
-        }
         jsQuery.dispose()
         errorJsQuery.dispose()
         browser.dispose()
+        currentImageEditor?.let { Disposer.dispose(it) }
     }
 }
