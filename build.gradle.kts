@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.github.emotionbug"
-version = "1.0.0"
+version = System.getenv("PLUGIN_VERSION") ?: "dev"
 
 repositories {
     mavenCentral()
@@ -46,6 +46,31 @@ intellijPlatform {
                 <li>Syntax highlighting and error annotations</li>
             </ul>
         """.trimIndent()
+
+        vendor {
+            name = "emotionbug"
+            email = "take-me-home@kakao.com"
+            url = "https://github.com/emotionbug"
+        }
+    }
+
+    signing {
+        certificateChain.set(
+            providers.environmentVariable("CERTIFICATE_CHAIN")
+        )
+        privateKey.set(
+            providers.environmentVariable("PRIVATE_KEY")
+        )
+        password.set(
+            providers.environmentVariable("PRIVATE_KEY_PASSWORD")
+        )
+    }
+
+    publishing {
+        token.set(
+            providers.environmentVariable("PUBLISH_TOKEN")
+        )
+        channels.set(listOf("default"))
     }
 }
 

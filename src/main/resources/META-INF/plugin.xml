@@ -8,7 +8,7 @@
     <name>Mermaid Live Editor</name>
 
     <!-- A displayed Vendor name or Organization ID displayed on the Plugins Page. -->
-    <vendor url="https://github.com/emotionbug/intellij-mermaid-live-editor" email="take-me-home@kakao.com">emotionbug
+    <vendor url="https://github.com/emotionbug" email="take-me-home@kakao.com">emotionbug
     </vendor>
 
     <!-- Description of the plugin displayed on the Plugin Page and IDE Plugin Manager.
