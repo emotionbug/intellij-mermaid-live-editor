@@ -118,10 +118,11 @@ class MermaidPreviewEditor(private val project: Project, private val file: Virtu
                 val mermaidJsUrl = getJsUrl()
                 val onMermaidError = browserManager.errorJsQuery.inject("JSON.stringify(errorData)")
                 val onMermaidRendered = browserManager.jsQuery.inject("svg")
+                val gson = Gson()
 
                 ApplicationManager.getApplication().executeOnPooledThread {
                     val initialText = runReadAction { FileDocumentManager.getInstance().getDocument(file)?.text } ?: ""
-                    val escapedInitialText = StringUtil.escapeStringCharacters(initialText)
+                    val jsonInitialText = gson.toJson(initialText)
 
                     val initJs = """
                         if (window.initialize) {
@@ -129,7 +130,7 @@ class MermaidPreviewEditor(private val project: Project, private val file: Virtu
                                 mermaidJsUrl: '$mermaidJsUrl',
                                 onMermaidError: function(errorData) { $onMermaidError },
                                 onMermaidRendered: function(svg) { $onMermaidRendered },
-                                initialText: '$escapedInitialText'
+                                initialText: $jsonInitialText
                             });
                         }
                     """.trimIndent()
@@ -182,8 +183,8 @@ class MermaidPreviewEditor(private val project: Project, private val file: Virtu
             return
         }
 
-        val escapedJsText = StringUtil.escapeStringCharacters(text)
-        val js = "if (window.updateDiagram) window.updateDiagram('$escapedJsText');"
+        val jsonText = Gson().toJson(text)
+        val js = "if (window.updateDiagram) window.updateDiagram($jsonText);"
         browserManager.browser.cefBrowser.executeJavaScript(js, browserManager.browser.cefBrowser.url, 0)
     }
 
