@@ -30,6 +30,8 @@
         }
     </style>
     <script>
+        let isMermaidLoaded = false;
+
         function reportError(msg) {
             console.error(msg);
             if (window.onMermaidError) {
@@ -43,6 +45,7 @@
             window.mermaidJsUrl = config.mermaidJsUrl;
             window.onMermaidError = config.onMermaidError;
             window.onMermaidRendered = config.onMermaidRendered;
+            window.initialText = config.initialText;
 
             const script = document.createElement('script');
             script.src = window.mermaidJsUrl;
@@ -62,6 +65,10 @@
                         er: {useMaxWidth: false},
                         pie: {useMaxWidth: false}
                     });
+                    isMermaidLoaded = true;
+                    if (window.initialText) {
+                        updateDiagram(window.initialText);
+                    }
                 } catch (e) {
                     reportError(e.message || e.toString());
                 }
@@ -114,8 +121,9 @@
 
         async function updateDiagram(text) {
             try {
-                if (typeof mermaid === 'undefined') {
-                    throw new Error('Mermaid library not loaded yet');
+                if (!isMermaidLoaded) {
+                    window.initialText = text;
+                    return;
                 }
                 try {
                     await mermaid.parse(text);

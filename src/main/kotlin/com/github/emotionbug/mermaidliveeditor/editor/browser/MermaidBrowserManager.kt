@@ -51,13 +51,13 @@ class MermaidBrowserManager(
                 disableDefaultHandling: BoolRef?
             ): CefResourceRequestHandler? {
                 val url = request?.url ?: return null
-                if (url.startsWith("https://mermaid-preview/")) {
+                if (url.contains("mermaid-preview")) {
                     return object : CefResourceRequestHandlerAdapter() {
                         override fun getResourceHandler(
                             browser: CefBrowser?,
                             frame: CefFrame?,
                             request: CefRequest?
-                        ): CefResourceHandler? {
+                        ): CefResourceHandler {
                             return MermaidResourceHandler()
                         }
                     }
@@ -176,19 +176,62 @@ class MermaidResourceHandler : CefResourceHandlerAdapter() {
     private var offset = 0
     private var mimeType: String? = null
 
+    companion object {
+        val RESOURCE_HANDLER_URL = "https://mermaid-preview/"
+
+        val DEFAULT_MERMAID_JS = "mermaid.min.js"
+        val LOCAL_FILE_MERMAID_JS = "external-mermaid.js"
+    }
+
     override fun processRequest(request: CefRequest?, callback: org.cef.callback.CefCallback?): Boolean {
         val url = request?.url ?: return false
-        val path = url.removePrefix("https://mermaid-preview/").ifEmpty { "mermaid_preview.html" }
+        // Extract path, ignoring query parameters
+        val urlWithoutQuery = url.split("?")[0]
+        val path = urlWithoutQuery.removePrefix(RESOURCE_HANDLER_URL).ifEmpty { "mermaid_preview.html" }
         val resourcePath = if (path.startsWith("/")) path else "/$path"
 
-        val stream = javaClass.getResourceAsStream(resourcePath)
-        if (stream != null) {
-            data = stream.use { it.readBytes() }
-            mimeType = URLConnection.guessContentTypeFromName(resourcePath) ?: "text/html"
-            callback?.Continue()
-            return true
+        // Reset state for new request
+        data = null
+        offset = 0
+        mimeType = null
+
+        ApplicationManager.getApplication().executeOnPooledThread {
+            // Handle bundled mermaid.min.js
+            if (path == DEFAULT_MERMAID_JS) {
+                val defaultName = com.github.emotionbug.mermaidliveeditor.MermaidSettingsState.MERMAID_JS_DEFAULT_NAME
+                val stream =
+                    javaClass.classLoader.getResourceAsStream(defaultName) ?: javaClass.getResourceAsStream("/$defaultName")
+                if (stream != null) {
+                    data = stream.use { it.readBytes() }
+                    mimeType = "application/javascript"
+                    callback?.Continue()
+                    return@executeOnPooledThread
+                }
+            }
+
+            // Handle external local files
+            if (path == LOCAL_FILE_MERMAID_JS) {
+                val settingsPath = com.github.emotionbug.mermaidliveeditor.MermaidSettingsState.instance.mermaidJsUrl
+                val filePath = settingsPath.removePrefix("file://").removePrefix("file:/")
+                val file = java.io.File(filePath)
+                if (file.exists()) {
+                    data = file.readBytes()
+                    mimeType = "application/javascript"
+                    callback?.Continue()
+                    return@executeOnPooledThread
+                }
+            }
+
+            val stream = javaClass.classLoader.getResourceAsStream(path) ?: javaClass.getResourceAsStream(resourcePath)
+            if (stream != null) {
+                data = stream.use { it.readBytes() }
+                mimeType = URLConnection.guessContentTypeFromName(resourcePath) ?: "text/html"
+                callback?.Continue()
+            } else {
+                callback?.cancel()
+            }
         }
-        return false
+        return true
     }
 
     override fun getResponseHeaders(
@@ -207,19 +250,25 @@ class MermaidResourceHandler : CefResourceHandlerAdapter() {
         bytesRead: org.cef.misc.IntRef?,
         callback: org.cef.callback.CefCallback?
     ): Boolean {
-        val available = (data?.size ?: 0) - offset
+        val currentData = data
+        if (currentData == null) {
+            bytesRead?.set(0)
+            return false
+        }
+        val available = currentData.size - offset
         if (available <= 0) {
             bytesRead?.set(0)
             return false
         }
 
         val toRead = minOf(available, bytesToRead)
-        data?.copyInto(dataOut!!, 0, offset, offset + toRead)
+        currentData.copyInto(dataOut!!, 0, offset, offset + toRead)
         offset += toRead
         bytesRead?.set(toRead)
         return true
     }
 
     override fun cancel() {
+        // do nothing
     }
 }

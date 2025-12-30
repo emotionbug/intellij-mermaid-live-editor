@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.github.emotionbug"
-version = "1.0-SNAPSHOT"
+version = "1.0.0"
 
 repositories {
     mavenCentral()
@@ -36,7 +36,15 @@ intellijPlatform {
         }
 
         changeNotes = """
-            Initial version
+            1.0.0
+            <ul>
+                <li>Initial release of Mermaid Live Editor</li>
+                <li>Real-time preview of Mermaid diagrams</li>
+                <li>Zoom and Pan functionality with mouse</li>
+                <li>Export diagrams to SVG and PPTX</li>
+                <li>Support for built-in, CDN, and local Mermaid.js files</li>
+                <li>Syntax highlighting and error annotations</li>
+            </ul>
         """.trimIndent()
     }
 }

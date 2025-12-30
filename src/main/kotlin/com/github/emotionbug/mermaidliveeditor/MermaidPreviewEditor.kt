@@ -1,6 +1,7 @@
 package com.github.emotionbug.mermaidliveeditor
 
 import com.github.emotionbug.mermaidliveeditor.editor.browser.MermaidBrowserManager
+import com.github.emotionbug.mermaidliveeditor.editor.browser.MermaidResourceHandler
 import com.github.emotionbug.mermaidliveeditor.editor.ui.MermaidPreviewPanel
 import com.google.gson.Gson
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
@@ -38,6 +39,27 @@ class MermaidPreviewEditor(private val project: Project, private val file: Virtu
     private var lastMermaidJsUrl: String? = null
     private val gson = Gson()
     private var lastSvg: String? = null
+
+    fun getJsUrl(): String {
+        return when (MermaidSettingsState.instance.jsSource) {
+            MermaidJsSource.BUILT_IN -> "${MermaidResourceHandler.RESOURCE_HANDLER_URL}${MermaidResourceHandler.DEFAULT_MERMAID_JS}"
+            MermaidJsSource.CDN -> MermaidSettingsState.instance.mermaidJsUrl
+            MermaidJsSource.LOCAL_FILE -> {
+                val path = MermaidSettingsState.instance.mermaidJsUrl.removePrefix("file://").removePrefix("file:/")
+                val file = java.io.File(path)
+                if (file.exists()) {
+                    "${MermaidResourceHandler.RESOURCE_HANDLER_URL}${MermaidResourceHandler.LOCAL_FILE_MERMAID_JS}"
+                } else {
+                    "${MermaidResourceHandler.RESOURCE_HANDLER_URL}${MermaidResourceHandler.DEFAULT_MERMAID_JS}"
+                }
+            }
+        }.let {
+            it.ifBlank { "${MermaidResourceHandler.RESOURCE_HANDLER_URL}${MermaidResourceHandler.DEFAULT_MERMAID_JS}" }
+        }.let {
+            // Add timestamp to prevent caching of the JS file itself
+            if (it.contains("?")) "$it&t=${System.currentTimeMillis()}" else "$it?t=${System.currentTimeMillis()}"
+        }
+    }
 
     init {
         browserManager.jsQuery.addHandler { svg ->
@@ -93,26 +115,28 @@ class MermaidPreviewEditor(private val project: Project, private val file: Virtu
             override fun onLoadEnd(browser: CefBrowser?, frame: CefFrame?, httpStatusCode: Int) {
                 LOG.info("Skeleton loaded with status: $httpStatusCode")
 
-                val mermaidJsUrl = MermaidSettingsState.instance.mermaidJsUrl
+                val mermaidJsUrl = getJsUrl()
                 val onMermaidError = browserManager.errorJsQuery.inject("JSON.stringify(errorData)")
                 val onMermaidRendered = browserManager.jsQuery.inject("svg")
 
-                val initJs = """
-                    if (window.initialize) {
-                        window.initialize({
-                            mermaidJsUrl: '$mermaidJsUrl',
-                            onMermaidError: function(errorData) { $onMermaidError },
-                            onMermaidRendered: function(svg) { $onMermaidRendered }
-                        });
-                    }
-                """.trimIndent()
-                browser?.executeJavaScript(initJs, browser.url, 0)
+                ApplicationManager.getApplication().executeOnPooledThread {
+                    val initialText = runReadAction { FileDocumentManager.getInstance().getDocument(file)?.text } ?: ""
+                    val escapedInitialText = StringUtil.escapeStringCharacters(initialText)
 
-                isSkeletonLoaded = true
-                ApplicationManager.getApplication().invokeLater {
-                    runReadAction { FileDocumentManager.getInstance().getDocument(file)?.text }?.let { text ->
-                        updateAlarm.cancelAllRequests()
-                        updateAlarm.addRequest({ updatePreview(text) }, 0)
+                    val initJs = """
+                        if (window.initialize) {
+                            window.initialize({
+                                mermaidJsUrl: '$mermaidJsUrl',
+                                onMermaidError: function(errorData) { $onMermaidError },
+                                onMermaidRendered: function(svg) { $onMermaidRendered },
+                                initialText: '$escapedInitialText'
+                            });
+                        }
+                    """.trimIndent()
+
+                    ApplicationManager.getApplication().invokeLater {
+                        browser?.executeJavaScript(initJs, browser.url, 0)
+                        isSkeletonLoaded = true
                     }
                 }
             }
@@ -128,10 +152,20 @@ class MermaidPreviewEditor(private val project: Project, private val file: Virtu
             }
             document.addDocumentListener(documentListener!!)
         }
+
+        project.messageBus.connect(this).subscribe(MermaidSettingsState.TOPIC, MermaidSettingsListener {
+            ApplicationManager.getApplication().invokeLater {
+                loadSkeleton()
+            }
+        })
     }
 
     private fun updatePreview(text: String) {
-        val currentUrl = MermaidSettingsState.instance.mermaidJsUrl
+        val settings = MermaidSettingsState.instance
+        val currentUrl = when (settings.jsSource) {
+            MermaidJsSource.BUILT_IN -> "BUILT_IN"
+            else -> settings.mermaidJsUrl
+        }
         if (!isSkeletonLoaded || currentUrl != lastMermaidJsUrl) {
             loadSkeleton()
             return
@@ -154,9 +188,16 @@ class MermaidPreviewEditor(private val project: Project, private val file: Virtu
     }
 
     private fun loadSkeleton() {
-        lastMermaidJsUrl = MermaidSettingsState.instance.mermaidJsUrl
+        LOG.info("Loading skeleton... current URL: ${browserManager.browser.cefBrowser.url}")
+        val settings = MermaidSettingsState.instance
+        lastMermaidJsUrl = when (settings.jsSource) {
+            MermaidJsSource.BUILT_IN -> "BUILT_IN"
+            else -> settings.mermaidJsUrl
+        }
         isSkeletonLoaded = false
-        browserManager.browser.loadURL("https://mermaid-preview/")
+        // Use a timestamp to force reload even if the URL is the same
+        val url = "https://mermaid-preview/?t=${System.currentTimeMillis()}"
+        browserManager.browser.loadURL(url)
     }
 
     override fun getFile(): VirtualFile = file
@@ -164,14 +205,17 @@ class MermaidPreviewEditor(private val project: Project, private val file: Virtu
     override fun getPreferredFocusedComponent(): JComponent = ui
     override fun getName(): String = "Mermaid Preview"
     override fun setState(state: FileEditorState) {
+        // Nothing to do
     }
 
     override fun isModified(): Boolean = false
     override fun isValid(): Boolean = true
     override fun addPropertyChangeListener(listener: PropertyChangeListener) {
+        // Nothing to do
     }
 
     override fun removePropertyChangeListener(listener: PropertyChangeListener) {
+        // Nothing to do
     }
 
     override fun getCurrentLocation(): FileEditorLocation? = null
