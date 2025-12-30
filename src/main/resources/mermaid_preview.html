@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        html, body, #mermaid-container {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: white;
+            user-select: none;
+        }
+
+        #mermaid-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: grab;
+        }
+
+        #mermaid-container:active {
+            cursor: grabbing;
+        }
+
+        #mermaid-svg-wrapper {
+            transform-origin: center center;
+            will-change: transform;
+        }
+    </style>
+    <script>
+        function reportError(msg) {
+            console.error(msg);
+            if (window.onMermaidError) {
+                window.onMermaidError({
+                    errors: [{message: msg, line: -1, column: -1}]
+                });
+            }
+        }
+
+        window.initialize = function (config) {
+            window.mermaidJsUrl = config.mermaidJsUrl;
+            window.onMermaidError = config.onMermaidError;
+            window.onMermaidRendered = config.onMermaidRendered;
+
+            const script = document.createElement('script');
+            script.src = window.mermaidJsUrl;
+            script.onerror = () => reportError('Failed to load Mermaid.js from ' + script.src);
+            script.onload = () => {
+                try {
+                    mermaid.initialize({
+                        startOnLoad: false,
+                        theme: (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'default',
+                        securityLevel: 'loose',
+                        flowchart: {useMaxWidth: false},
+                        sequence: {useMaxWidth: false},
+                        gantt: {useMaxWidth: false},
+                        journey: {useMaxWidth: false},
+                        class: {useMaxWidth: false},
+                        state: {useMaxWidth: false},
+                        er: {useMaxWidth: false},
+                        pie: {useMaxWidth: false}
+                    });
+                } catch (e) {
+                    reportError(e.message || e.toString());
+                }
+            };
+            document.head.appendChild(script);
+        };
+    </script>
+    <script>
+        let scale = 1;
+        let translateX = 0;
+        let translateY = 0;
+        let isPanning = false;
+        let startX, startY;
+
+        function updateTransform() {
+            const wrapper = document.getElementById('mermaid-svg-wrapper');
+            wrapper.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
+        }
+
+        function fitToScreen() {
+            const container = document.getElementById('mermaid-container');
+            const wrapper = document.getElementById('mermaid-svg-wrapper');
+            const svg = wrapper.querySelector('svg');
+            if (!svg) return;
+
+            const containerRect = container.getBoundingClientRect();
+            const svgWidth = svg.viewBox.baseVal.width || svg.width.baseVal.value || svg.clientWidth;
+            const svgHeight = svg.viewBox.baseVal.height || svg.height.baseVal.value || svg.clientHeight;
+
+            const padding = 20;
+            const availableWidth = containerRect.width - padding * 2;
+            const availableHeight = containerRect.height - padding * 2;
+
+            const scaleX = availableWidth / svgWidth;
+            const scaleY = availableHeight / svgHeight;
+
+            scale = Math.min(scaleX, scaleY);
+            scale = Math.min(scale, 1.0);
+
+            translateX = 0;
+            translateY = 0;
+            updateTransform();
+        }
+
+        function resetView() {
+            fitToScreen();
+        }
+
+        window.resetView = resetView;
+
+        async function updateDiagram(text) {
+            try {
+                if (typeof mermaid === 'undefined') {
+                    throw new Error('Mermaid library not loaded yet');
+                }
+                try {
+                    await mermaid.parse(text);
+                } catch (err) {
+                    console.error(err);
+                    const errorList = Array.isArray(err) ? err : [err];
+                    const errorData = {
+                        errors: errorList.map(e => ({
+                            message: e.message || e.toString(),
+                            line: e.hash ? e.hash.line : (e.loc ? e.loc.first_line : (e.line !== undefined ? e.line : -1)),
+                            column: e.hash ? (e.hash.loc ? e.hash.loc.first_column : -1) : (e.loc ? e.loc.first_column : (e.column !== undefined ? e.column : -1))
+                        }))
+                    };
+                    if (window.onMermaidError) {
+                        window.onMermaidError(errorData);
+                    }
+                    return;
+                }
+                const id = 'mermaid-svg-' + Date.now();
+                const container = document.getElementById('mermaid-svg-wrapper');
+                const {svg} = await mermaid.render(id, text);
+                if (window.onMermaidRendered) {
+                    window.onMermaidRendered(svg);
+                }
+                container.innerHTML = svg;
+                fitToScreen();
+            } catch (err) {
+                console.error(err);
+                const errorData = {
+                    errors: [{
+                        message: err.message || err.toString(),
+                        line: err.hash ? err.hash.line : (err.loc ? err.loc.first_line : (err.line !== undefined ? err.line : -1)),
+                        column: err.hash ? (err.hash.loc ? err.hash.loc.first_column : -1) : (err.loc ? err.loc.first_column : (err.column !== undefined ? err.column : -1))
+                    }]
+                };
+                if (window.onMermaidError) {
+                    window.onMermaidError(errorData);
+                }
+            }
+        }
+
+        window.updateDiagram = updateDiagram;
+
+        document.addEventListener("DOMContentLoaded", function () {
+            const container = document.getElementById('mermaid-container');
+
+            container.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                const delta = e.deltaY > 0 ? 0.9 : 1.1;
+                scale *= delta;
+                scale = Math.min(Math.max(0.1, scale), 10);
+                updateTransform();
+            }, {passive: false});
+
+            container.addEventListener('mousedown', (e) => {
+                isPanning = true;
+                startX = e.clientX - translateX;
+                startY = e.clientY - translateY;
+            });
+
+            window.addEventListener('mousemove', (e) => {
+                if (!isPanning) return;
+                translateX = e.clientX - startX;
+                translateY = e.clientY - startY;
+                updateTransform();
+            });
+
+            window.addEventListener('mouseup', () => {
+                isPanning = false;
+            });
+
+        });
+    </script>
+</head>
+<body>
+<div id="mermaid-container">
+    <div id="mermaid-svg-wrapper"></div>
+</div>
+</body>
+</html>

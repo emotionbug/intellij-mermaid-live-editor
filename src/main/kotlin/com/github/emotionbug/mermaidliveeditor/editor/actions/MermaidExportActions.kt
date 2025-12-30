@@ -10,9 +10,9 @@ import com.intellij.openapi.fileChooser.FileSaverDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.openapi.diagnostic.Logger
 
-class SaveSvgAction(private val project: Project, private val lastSvgProvider: () -> String?) : AnAction("Save SVG As...") {
+class SaveSvgAction(private val project: Project, private val lastSvgProvider: () -> String?) :
+    AnAction("Save SVG As...") {
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
 
     override fun actionPerformed(e: AnActionEvent) {
@@ -32,9 +32,8 @@ class SaveSvgAction(private val project: Project, private val lastSvgProvider: (
     }
 }
 
-class SavePptxAction(private val project: Project, private val lastSvgProvider: () -> String?) : AnAction("Save PPTX As...") {
-    private val LOG = Logger.getInstance(SavePptxAction::class.java)
-
+class SavePptxAction(private val project: Project, private val lastSvgProvider: () -> String?) :
+    AnAction("Save PPTX As...") {
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
 
     override fun actionPerformed(e: AnActionEvent) {
@@ -43,10 +42,8 @@ class SavePptxAction(private val project: Project, private val lastSvgProvider: 
         val dialog = FileChooserFactory.getInstance().createSaveFileDialog(descriptor, project)
         val fileWrapper = dialog.save(null as VirtualFile?, "diagram.pptx")
         if (fileWrapper != null) {
-            try {
+            WriteAction.run<Exception> {
                 MermaidSvg2Pptx.generate(svg, fileWrapper.file)
-            } catch (e: Exception) {
-                LOG.error("Failed to generate PPTX", e)
             }
         }
     }
