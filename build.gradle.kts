@@ -1,7 +1,7 @@
 plugins {
     id("java")
     id("org.jetbrains.kotlin.jvm") version "2.1.20"
-    id("org.jetbrains.intellij.platform") version "2.10.2"
+    id("org.jetbrains.intellij.platform") version "2.10.5"
 }
 
 group = "com.github.emotionbug"
@@ -23,7 +23,10 @@ dependencies {
         bundledPlugin("com.intellij.platform.images")
     }
 
-    implementation("org.apache.poi:poi-ooxml:5.5.1")
+    implementation("org.apache.poi:poi:5.2.5")
+    implementation("org.apache.poi:poi-ooxml:5.2.5")
+    implementation("org.apache.poi:poi-ooxml-schemas:5.2.5")
+    implementation("org.apache.xmlbeans:xmlbeans:5.1.1")
 
     implementation("org.seleniumhq.selenium:selenium-java:4.39.0")
     implementation("io.github.bonigarcia:webdrivermanager:6.3.3")
